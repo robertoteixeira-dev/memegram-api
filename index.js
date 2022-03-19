@@ -44,7 +44,7 @@ pool
     const express = require('express')
     const bodyParser = require('body-parser')
     const app = express()
-    const port = 3000
+    const port = 3001
 
     app.use(bodyParser.json())
     app.use(
@@ -55,10 +55,12 @@ pool
 
     app.use(fileUpload({
       useTempFiles: true,
-      tempFileDir: './tmp/'
+      tempFileDir: './public/tmp/'
     }));
 
     app.use(cookieParser());
+
+    app.use(express.static(__dirname + '/public'));
 
     /*
      * Send data as json body to the server! To access use request.body
@@ -132,7 +134,7 @@ pool
 
       const ext = img.name.split('.').pop();
 
-      img.mv(path.join(__dirname, 'tmp', `${id}.${ext}`), (err) => {
+      img.mv(path.join(__dirname, 'public/tmp', `${id}.${ext}`), (err) => {
         if (err) throw err;
 
         const q = `INSERT INTO posts(id, body, timestamp, ext, user_id) VALUES('${id}', '${description}', ${tmp}, '${ext}', '${user_id}')`;
@@ -158,6 +160,22 @@ pool
       
     });
 
+    app.get('/users', (request, response, next) => {
+
+      const q = "SELECT * FROM users;";
+
+      // callback
+      client.query(q, (err, res) => {
+        if (err) {
+          next(err.stack)
+        } else {
+          response.setHeader('Access-Control-Allow-Origin', '*').json(res.rows)
+        }
+
+       // client.release()
+      })
+    });
+
     app.get('/posts/:id/:offset/:n', (request, response, next) => {
 
       const params = request.params;
@@ -165,7 +183,7 @@ pool
       const offset = params.offset;
       const n = params.n;
 
-      const q = `SELECT * FROM posts where user_id='${id}' order by id LIMIT ${n} OFFSET ${offset};`;
+      const q = `select p.id, p.body, p."timestamp", p.ext, u.username from posts as p join users as u on p.user_id = u.id order by p.id LIMIT ${n} OFFSET ${offset};`;
 
       client.query(q, (err, res) => {
         if (err) {

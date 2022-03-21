@@ -35,13 +35,14 @@ const config = {
 const Pool = require('pg').Pool;
 const pool = new Pool(config);
 
-
+const tokens = {};
 pool
   .connect()
   .then(function (client) {
     console.log('connected')
 
     const express = require('express')
+    const cors = require('cors');
     const bodyParser = require('body-parser')
     const app = express()
     const port = 3001
@@ -55,12 +56,13 @@ pool
 
     app.use(fileUpload({
       useTempFiles: true,
-      tempFileDir: './public/tmp/'
+      tempFileDir: './tmp/'
     }));
 
     app.use(cookieParser());
 
     app.use(express.static(__dirname + '/public'));
+    app.use(cors());
 
     /*
      * Send data as json body to the server! To access use request.body
@@ -71,22 +73,41 @@ pool
       response.write(JSON.stringify(request.body));
       response.end();*/
 
-      const user = request.body;
-      const id = uuidv4.v4();
-      const tmp = Date.now();
+      const user = JSON.parse(request.body.user);
+      const profile = request.files.profile;
 
-      const q = `INSERT INTO users(id, username, email, signUpTime) VALUES('${id}', '${user.username}', '${user.email}', ${tmp})`;
+      user.id = uuidv4.v4();
+      user.tmp = Date.now();
+      var password = user.password;
 
-      // callback
-      client.query(q, (err, res) => {
+      const shasum = crypto.createHash('sha256');
+
+      shasum.update(JSON.stringify(password));
+      user.password = shasum.digest('hex');
+
+      const ext = profile.name.split('.').pop();
+
+      profile.mv(path.join(__dirname, 'public/profiles', `${user.id}.${ext}`), (err) => {
+
         if (err) {
-          next(err.stack)
-        } else {
-          response.setHeader('Access-Control-Allow-Origin', '*').end("user inserido!")
-        }
+          next(err.stack);
+          return;
+        };
 
-        // client.release()
-      });
+        const q = `INSERT INTO users(id, username, email, signUpTime, password, ext) VALUES('${user.id}', '${user.username}', '${user.email}', ${user.tmp}, '${user.password}', '${ext}')`;
+
+        // callback
+        client.query(q, (err, res) => {
+          if (err) {
+            next(err.stack);
+          } else {
+            response.setHeader('Access-Control-Allow-Origin', '*').json({message: 'user inserted!'});
+          }
+
+          // client.release()
+        });
+
+      }) 
 
     });
 
@@ -117,44 +138,50 @@ pool
 
     });
 
-    app.post('/posts', (request, response, next) => {
+    app.post('/upload', (request, response, next) => {
 
-      /*response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.write(JSON.stringify(request.body));
-      response.end();*/
+      const token = request.get('access_token');
+      
+      if(token == undefined || token == null){
+        response.status(401).json({});
+        return;
+      } 
+
+      const userId = tokens[token];
+
+      console.log(`[upload]token: ${token} u: ${userId}`);
+      
+      if(userId == undefined || userId == null){
+        response.status(401).json({});
+        return;
+      } 
 
       const body = request.body;
 
-      const description = body.description;
-      const user_id = body.user_id;
-      const img = request.files.img;
+      console.log(body);
+
+      const description = body.post.description;
+      const img = request.files.image;
 
       const id = uuidv4.v4();
       const tmp = Date.now();
 
       const ext = img.name.split('.').pop();
 
-      img.mv(path.join(__dirname, 'public/tmp', `${id}.${ext}`), (err) => {
+      img.mv(path.join(__dirname, 'public/images', `${id}.${ext}`), (err) => {
         if (err) throw err;
 
-        const q = `INSERT INTO posts(id, body, timestamp, ext, user_id) VALUES('${id}', '${description}', ${tmp}, '${ext}', '${user_id}')`;
+        const q = `INSERT INTO posts(id, body, timestamp, ext, user_id) VALUES('${id}', '${description}', ${tmp}, '${ext}', '${userId}')`;
 
         // callback
         client.query(q, function(err, res){
           if (err) {
-            //next(err.stack)
-
-            response.status(500);
-            response.end('something bad has happened!');
-
+            next(err.stack);
           } else {
-            response.setHeader('Access-Control-Allow-Origin', '*').end("post inserido!")
+            response.setHeader('Access-Control-Allow-Origin', '*').json({message: 'post inserted!'})
           }
 
-          // client.release()
         });
-
-        //response.setHeader('Access-Control-Allow-Origin', '*').end("yeah")
       });
 
       
@@ -176,14 +203,29 @@ pool
       })
     });
 
-    app.get('/posts/:id/:offset/:n', (request, response, next) => {
+    app.get('/posts/:offset/:n', (request, response, next) => {
+
+      const token = request.get('access_token');
+      
+      if(token == undefined || token == null){
+        response.status(401).json({});
+        return;
+      } 
+
+      const id = tokens[token];
+
+      console.log(`[posts]token: ${token} u: ${id}`);
+      
+      if(id == undefined || id == null){
+        response.status(401).json({});
+        return;
+      } 
 
       const params = request.params;
-      const id = params.id;
       const offset = params.offset;
       const n = params.n;
 
-      const q = `select p.id, p.body, p."timestamp", p.ext, u.username from posts as p join users as u on p.user_id = u.id order by p.id LIMIT ${n} OFFSET ${offset};`;
+      const q = `select p.id, p.body, p."timestamp", p.ext, p.user_id, u.ext as profile_ext, u.username from posts as p join users as u on p.user_id = u.id where u.id = '${id}' order by p.id LIMIT ${n} OFFSET ${offset};`;
 
       client.query(q, (err, res) => {
         if (err) {
@@ -193,21 +235,22 @@ pool
         }
       });
 
+      //response.setHeader('Access-Control-Allow-Origin', '*').json({message: "hi"});
     })
 
-    app.get('/login', (request, response, next) => {
+    app.post('/login', (request, response, next) => {
 
       const body = request.body;
-
-      const username = body.username;
+      
+      const login = body.login;
       var password = body.password;
 
       const shasum = crypto.createHash('sha256');
 
       shasum.update(JSON.stringify(password));
       password = shasum.digest('hex');
-
-      const q = `SELECT * FROM users where username='${username}' and password = '${password}';`;
+  
+      const q = `SELECT * FROM users where (username='${login}' or email='${login}') and password = '${password}';`;
 
       client.query(q, (err, res) => {
         if (err) {
@@ -217,15 +260,20 @@ pool
           // Se username e senha estao corretos, retorna uma linha (row)
           if(res.rowCount == 1){
 
+            const token = uuidv4.v4();
+
+            const id = res.rows[0].id;
+            tokens[token] = id;
+
             response
               .setHeader('Access-Control-Allow-Origin', '*')
-              .cookie('user', {
-                id: 'lucas'
-              }).end('logado com sucesso!');
+              /*.cookie('user_cookie', {
+                id: res.rows[0].id
+              })*/.json({access_token: token});
 
               // Senha ou username errados
           } else {
-            response.setHeader('Access-Control-Allow-Origin', '*').end('username or password is wrong!');
+            response.setHeader('Access-Control-Allow-Origin', '*').json(null);
           }
 
         }
@@ -245,10 +293,16 @@ pool
 
     });
 
-    app.get('/logout', (request, response, next) => {
+    app.post('/logout', (request, response, next) => {
+      //response.clearCookie('user').end('successfull logout....');
 
-      response.clearCookie('user').end('successfull logout....');
-  
+      const token = request.headers.acess_token;
+
+      if(tokens[token] != undefined){
+        tokens[token] = undefined;
+      }
+
+      response.json({});
     });
 
     app.listen(port, () => {

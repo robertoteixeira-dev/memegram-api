@@ -69,10 +69,6 @@ pool
     */
     app.post('/users', (request, response, next) => {
 
-      /*response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.write(JSON.stringify(request.body));
-      response.end();*/
-
       const user = JSON.parse(request.body.user);
       const profile = request.files.profile;
 
@@ -112,10 +108,6 @@ pool
     });
 
     app.post('/followers', (request, response, next) => {
-
-      /*response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.write(JSON.stringify(request.body));
-      response.end();*/
 
       const body = request.body;
 

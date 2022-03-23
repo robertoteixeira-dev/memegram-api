@@ -52,6 +52,8 @@ This project was developed with the following technologies:
 
 - ✔️ PostgreSQL
 
+- ✔️ Express
+
 ---
 
 Made with 💜 by Roberto Teixeira 👋 [See my linkedin](https://www.linkedin.com/in/roberto-teixeira-developer/)

@@ -125,7 +125,6 @@ pool
           response.setHeader('Access-Control-Allow-Origin', '*').end("follower inserido!")
         }
 
-        // client.release()
       });
 
     });
